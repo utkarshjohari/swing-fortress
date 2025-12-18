@@ -33,13 +33,13 @@ def send_telegram(message):
 
 def check_stock(symbol):
     try:
-        # Fetch 6 months of data for reliable trend calculation
+        # Fetch 6 months of data
         df = yf.download(symbol, period="6mo", interval="1h", progress=False)
         if len(df) < 200: return None
         
         # Calculate Indicators (50/100 EMA)
         df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-        df['EMA_100'] = df['Close'].ewm(span=100, adjust=False).mean() # Changed to 100 as per optimization
+        df['EMA_100'] = df['Close'].ewm(span=100, adjust=False).mean()
         
         current = df.iloc[-1]
         prev = df.iloc[-2]
@@ -54,17 +54,21 @@ def check_stock(symbol):
         # Condition: Trend is UP (50 > 100)
         if current['EMA_50'] > current['EMA_100']:
             
-            # Logic: Low touched 50 EMA, but Close is above it (Bounce)
-            # And Previous candle was NOT touching it (to avoid spamming on every candle of a dip)
+            # Logic: 
+            # 1. Price touched EMA 50 during the candle (Low <= EMA)
+            # 2. But Price closed ABOVE EMA 50 (Support Held)
+            # 3. Candle is Green (Close > Open) -> Confirmation of Bounce
             
-            # Simple "Dip Zone": Price is close to EMA 50 (within 1%) but above it
-            dist_to_50 = (current['Close'] - current['EMA_50']) / current['EMA_50']
+            touched_ema = current['Low'] <= current['EMA_50']
+            held_support = current['Close'] > current['EMA_50']
+            green_candle = current['Close'] > current['Open']
             
-            # If price dipped near EMA 50 (0% to 1.5% buffer) and is green (Close > Open)
-            # This confirms support
-            if 0 < dist_to_50 < 0.015 and current['Close'] > current['Open']:
-                 # Check if we weren't already here last hour (simple de-bounce)
-                 if (prev['Close'] - prev['EMA_50']) / prev['EMA_50'] > 0.015:
+            if touched_ema and held_support and green_candle:
+                 # DE-BOUNCE: Check if previous candle ALREADY triggered this
+                 # We only want the alert on the *first* bounce candle
+                 prev_bounce = (prev['Low'] <= prev['EMA_50']) and (prev['Close'] > prev['EMA_50'])
+                 
+                 if not prev_bounce:
                     return f"💰 *PYRAMID ADD: {symbol}*\nDip to 50 EMA detected.\nAdd to Winners!\nPrice: {current['Close']:.2f}"
 
             # 3. EXIT (15% Trail)
@@ -81,7 +85,7 @@ def check_stock(symbol):
         return None
 
 def main():
-    print("--- ☁️ Cloud Sentinel (Pyramid Edition) ---")
+    print("--- ☁️ Cloud Sentinel (Final Fortress) ---")
     
     ist = pytz.timezone('Asia/Kolkata')
     now_ist = datetime.datetime.now(ist)
@@ -104,7 +108,7 @@ def main():
     health_hours = [9, 11, 13, 15]
     if current_hour in health_hours and 28 <= current_minute <= 32:
         if not alerts:
-            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: Monitoring for Dips & Crosses."
+            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: Monitoring."
             send_telegram(health_msg)
 
 if __name__ == "__main__":
