@@ -2,10 +2,10 @@ import yfinance as yf
 import pandas as pd
 import requests
 import os
-import time
+import datetime
+import pytz # New library for Timezones
 
 # ================= CONFIGURATION =================
-# NIFTY 50 LIST (Add .NS for Yahoo Finance)
 STOCKS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", 
     "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "AXISBANK.NS",
@@ -19,9 +19,8 @@ STOCKS = [
     "HEROMOTOCO.NS", "LTIM.NS", "BEL.NS", "HAL.NS", "VBL.NS" 
 ]
 
-# CREDENTIALS (Loaded from GitHub Secrets)
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.environ.get("TG_TOKEN")
+CHAT_ID = os.environ.get("TG_CHAT_ID")
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -33,7 +32,6 @@ def send_telegram(message):
 
 def check_stock(symbol):
     try:
-        # Fetch 60 days of 1h data (enough to find the cross)
         df = yf.download(symbol, period="3mo", interval="1h", progress=False)
         if len(df) < 200: return None
         
@@ -41,36 +39,22 @@ def check_stock(symbol):
         df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
         df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
         
-        # Logic
         current = df.iloc[-1]
         prev = df.iloc[-2]
         
         # 1. GOLDEN CROSS (Buy Signal)
-        # Condition: 50 just crossed above 200 in the last candle
         if prev['EMA_50'] <= prev['EMA_200'] and current['EMA_50'] > current['EMA_200']:
             return f"🚀 *BUY ALERT: {symbol}*\nGolden Cross Detected!\nPrice: {current['Close']:.2f}"
             
         # 2. TRAILING STOP (Sell Signal)
-        # Condition: Currently in Uptrend (50 > 200)
         if current['EMA_50'] > current['EMA_200']:
-            # Stateless Logic: Find the Highest High since the Cross happened
-            # We look backwards to find when 50 was last below 200
-            # Get the 'bull run' slice
-            bull_mask = df['EMA_50'] > df['EMA_200']
-            # Find the last time it flipped (start of this trend)
-            # This is a bit heavy, simplified: Look at last 60 days.
-            # If we are deep in trend, calculate High of last 300 bars
-            lookback = 300
-            if len(df) > lookback:
-                recent_df = df.iloc[-lookback:]
-            else:
-                recent_df = df
+            # Find Highest High since Cross
+            # Simplified: Look at last 100 candles (approx 4 months of hourly data)
+            lookback = 100
+            recent = df.iloc[-lookback:]
+            highest_high = recent['High'].max()
+            stop_level = highest_high * 0.85 # 15% Trail
             
-            # Highest High in the recent period
-            highest_high = recent_df['High'].max()
-            stop_level = highest_high * 0.85
-            
-            # TRIGGER: Close crossed below Stop Level just now
             if prev['Close'] >= stop_level and current['Close'] < stop_level:
                  return f"🔻 *SELL ALERT: {symbol}*\n15% Trail Hit!\nHigh: {highest_high:.2f} | Stop: {stop_level:.2f}\nCurrent: {current['Close']:.2f}"
                  
@@ -80,21 +64,39 @@ def check_stock(symbol):
 
 def main():
     print("--- ☁️ Cloud Sentinel Starting ---")
+    
+    # 1. TIME CHECK (IST)
+    ist = pytz.timezone('Asia/Kolkata')
+    now_ist = datetime.datetime.now(ist)
+    current_hour = now_ist.hour
+    current_minute = now_ist.minute
+    
+    print(f"🕒 Current Time (IST): {now_ist.strftime('%H:%M')}")
+    
     alerts = []
     
+    # 2. SCAN STOCKS
     for stock in STOCKS:
-        # print(f"Scanning {stock}...")
         msg = check_stock(stock)
-        if msg:
-            print(msg)
-            alerts.append(msg)
+        if msg: alerts.append(msg)
     
+    # 3. SEND SIGNALS (Priority)
     if alerts:
         final_msg = "\n\n".join(alerts)
         send_telegram(final_msg)
-        print("✅ Alerts sent to Telegram.")
-    else:
-        print("💤 No signals found.")
+        print("✅ Signals sent.")
+        
+    # 4. HEALTH CHECK (Every 2 Hours)
+    # Trigger at 9:30, 11:30, 13:30 (1:30 PM), 15:30 (3:30 PM)
+    # We check if minute is > 20 to account for small GitHub delays
+    health_hours = [9, 11, 13, 15]
+    
+    if current_hour in health_hours and current_minute >= 20 and current_minute <= 50:
+        # Only send health check if NO real signals were sent (to reduce spam)
+        if not alerts:
+            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nScanned: 50 Stocks\nStatus: No Signals."
+            send_telegram(health_msg)
+            print("✅ Health Check sent.")
 
 if __name__ == "__main__":
     main()
