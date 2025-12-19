@@ -105,6 +105,9 @@ def main():
         if not alerts:
             health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: Monitoring."
             send_telegram(health_msg)
+            # Add this temporarily to debug
+            print(f"Token Found: {'Yes' if os.environ.get('TG_TOKEN') else 'No'}")
+            print(f"Chat ID Found: {'Yes' if os.environ.get('TG_CHAT_ID') else 'No'}")
             print("✅ Health Check sent.")
 
 if __name__ == "__main__":
