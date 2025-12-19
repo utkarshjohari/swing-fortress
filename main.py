@@ -13,12 +13,12 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 STOCKS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", 
     "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "AXISBANK.NS",
-    "KOTAKBANK.NS", "LT.NS", "HINDUNILVR.NS", "TATAMOTORS.NS", "TATASTEEL.NS",
+    "KOTAKBANK.NS", "LT.NS", "HINDUNILVR.NS","TATASTEEL.NS",
     "MARUTI.NS", "TITAN.NS", "ULTRACEMCO.NS", "ASIANPAINT.NS", "SUNPHARMA.NS",
     "M&M.NS", "NTPC.NS", "POWERGRID.NS", "BAJAJFINSV.NS", "HCLTECH.NS",
     "ONGC.NS", "WIPRO.NS", "COALINDIA.NS", "JSWSTEEL.NS", "ADANIENT.NS",
     "ADANIPORTS.NS", "BPCL.NS", "GRASIM.NS", "HINDALCO.NS", "DRREDDY.NS",
-    "CIPLA.NS", "TECHM.NS", "SBILIFE.NS", "BRITANNIA.NS", "INDUSINDBK.NS",  # Fixed SBILIFE
+    "CIPLA.NS", "TECHM.NS", "SBILIFE.NS", "BRITANNIA.NS", "INDUSINDBK.NS",
     "TATACONSUM.NS", "EICHERMOT.NS", "NESTLEIND.NS", "APOLLOHOSP.NS", "DIVISLAB.NS",
     "HEROMOTOCO.NS", "LTIM.NS", "BEL.NS", "HAL.NS", "VBL.NS" 
 ]
@@ -75,7 +75,6 @@ def check_stock(symbol):
                  
         return None
     except Exception as e:
-        # print(f"Error {symbol}: {e}") # Optional: Silent error handling
         return None
 
 def main():
@@ -98,16 +97,15 @@ def main():
         send_telegram(final_msg)
         print("✅ Signals sent.")
         
-    # Health Check (9:30, 11:30, 1:30, 3:30)
-    health_hours = [9, 11, 13, 15]
-    # Expanded window slightly to ensure it catches the run
-    if current_hour in health_hours and 25 <= current_minute <= 35:
+    # --- TEMPORARY FIX: WIDE WINDOW ---
+    # We allow the health check to run anytime (0-59 mins) just to prove it works.
+    # Once you see the message, you can change '0 <= current_minute <= 59' back to '25 <= ... <= 35'
+    health_hours = [9, 11, 13, 15, 16, 17, 18, 19, 20] # Added evening hours for testing
+    
+    if current_hour in health_hours and 0 <= current_minute <= 59:
         if not alerts:
-            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: Monitoring."
+            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: System Online."
             send_telegram(health_msg)
-            # Add this temporarily to debug
-            print(f"Token Found: {'Yes' if os.environ.get('TG_TOKEN') else 'No'}")
-            print(f"Chat ID Found: {'Yes' if os.environ.get('TG_CHAT_ID') else 'No'}")
             print("✅ Health Check sent.")
 
 if __name__ == "__main__":
