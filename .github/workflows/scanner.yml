@@ -24,6 +24,6 @@ jobs:
 
       - name: Run Sentinel
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
+          TELEGRAM__CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python main.py
