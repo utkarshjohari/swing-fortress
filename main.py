@@ -4,9 +4,12 @@ import requests
 import os
 import datetime
 import pytz
+import warnings
+
+# Mute warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # ================= CONFIGURATION =================
-# TOP 50 STOCKS
 STOCKS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", 
     "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "AXISBANK.NS",
@@ -15,7 +18,7 @@ STOCKS = [
     "M&M.NS", "NTPC.NS", "POWERGRID.NS", "BAJAJFINSV.NS", "HCLTECH.NS",
     "ONGC.NS", "WIPRO.NS", "COALINDIA.NS", "JSWSTEEL.NS", "ADANIENT.NS",
     "ADANIPORTS.NS", "BPCL.NS", "GRASIM.NS", "HINDALCO.NS", "DRREDDY.NS",
-    "CIPLA.NS", "TECHM.NS", "SBI_LIFE.NS", "BRITANNIA.NS", "INDUSINDBK.NS",
+    "CIPLA.NS", "TECHM.NS", "SBILIFE.NS", "BRITANNIA.NS", "INDUSINDBK.NS",  # Fixed SBILIFE
     "TATACONSUM.NS", "EICHERMOT.NS", "NESTLEIND.NS", "APOLLOHOSP.NS", "DIVISLAB.NS",
     "HEROMOTOCO.NS", "LTIM.NS", "BEL.NS", "HAL.NS", "VBL.NS" 
 ]
@@ -34,10 +37,12 @@ def send_telegram(message):
 def check_stock(symbol):
     try:
         # Fetch 6 months of data
-        df = yf.download(symbol, period="6mo", interval="1h", progress=False)
+        # Added auto_adjust=True to fix warnings
+        df = yf.download(symbol, period="6mo", interval="1h", progress=False, auto_adjust=True)
+        
         if len(df) < 200: return None
         
-        # Calculate Indicators (50/100 EMA)
+        # Calculate Indicators
         df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
         df['EMA_100'] = df['Close'].ewm(span=100, adjust=False).mean()
         
@@ -46,46 +51,36 @@ def check_stock(symbol):
         
         # --- LOGIC ---
         
-        # 1. INITIAL ENTRY (Golden Cross)
+        # 1. INIT BUY
         if prev['EMA_50'] <= prev['EMA_100'] and current['EMA_50'] > current['EMA_100']:
-            return f"🚀 *INIT BUY: {symbol}*\nGolden Cross (50 > 100)!\nStart New Position.\nPrice: {current['Close']:.2f}"
+            return f"🚀 *INIT BUY: {symbol}*\nGolden Cross (50 > 100)!\nPrice: {current['Close']:.2f}"
 
-        # 2. PYRAMID ADD (Dip to 50 EMA)
-        # Condition: Trend is UP (50 > 100)
+        # 2. PYRAMID ADD
         if current['EMA_50'] > current['EMA_100']:
-            
-            # Logic: 
-            # 1. Price touched EMA 50 during the candle (Low <= EMA)
-            # 2. But Price closed ABOVE EMA 50 (Support Held)
-            # 3. Candle is Green (Close > Open) -> Confirmation of Bounce
-            
             touched_ema = current['Low'] <= current['EMA_50']
             held_support = current['Close'] > current['EMA_50']
             green_candle = current['Close'] > current['Open']
             
             if touched_ema and held_support and green_candle:
-                 # DE-BOUNCE: Check if previous candle ALREADY triggered this
-                 # We only want the alert on the *first* bounce candle
                  prev_bounce = (prev['Low'] <= prev['EMA_50']) and (prev['Close'] > prev['EMA_50'])
-                 
                  if not prev_bounce:
-                    return f"💰 *PYRAMID ADD: {symbol}*\nDip to 50 EMA detected.\nAdd to Winners!\nPrice: {current['Close']:.2f}"
+                    return f"💰 *PYRAMID ADD: {symbol}*\nDip to 50 EMA.\nPrice: {current['Close']:.2f}"
 
-            # 3. EXIT (15% Trail)
-            # Look back 300 candles for Highest High
+            # 3. SELL ALL (15% Trail)
             recent = df.iloc[-300:]
             highest_high = recent['High'].max()
-            stop_level = highest_high * 0.85 # 15% Trail
+            stop_level = highest_high * 0.85
             
             if prev['Close'] >= stop_level and current['Close'] < stop_level:
-                 return f"🛑 *SELL ALL: {symbol}*\n15% Trail Hit.\nClose All Positions.\nHigh: {highest_high:.2f} | Stop: {stop_level:.2f}\nCurrent: {current['Close']:.2f}"
+                 return f"🛑 *SELL ALL: {symbol}*\n15% Trail Hit.\nStop: {stop_level:.2f}\nCurrent: {current['Close']:.2f}"
                  
         return None
     except Exception as e:
+        # print(f"Error {symbol}: {e}") # Optional: Silent error handling
         return None
 
 def main():
-    print("--- ☁️ Cloud Sentinel (Final Fortress) ---")
+    print("--- ☁️ Cloud Sentinel (Polished) ---")
     
     ist = pytz.timezone('Asia/Kolkata')
     now_ist = datetime.datetime.now(ist)
@@ -104,12 +99,14 @@ def main():
         send_telegram(final_msg)
         print("✅ Signals sent.")
         
-    # Health Check (9:30, 11:30, 1:30, 3:30) at xx:30 mark
+    # Health Check (9:30, 11:30, 1:30, 3:30)
     health_hours = [9, 11, 13, 15]
-    if current_hour in health_hours and 28 <= current_minute <= 32:
+    # Expanded window slightly to ensure it catches the run
+    if current_hour in health_hours and 25 <= current_minute <= 35:
         if not alerts:
             health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: Monitoring."
             send_telegram(health_msg)
+            print("✅ Health Check sent.")
 
 if __name__ == "__main__":
     main()
