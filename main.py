@@ -36,7 +36,6 @@ def send_telegram(message):
 
 def check_stock(symbol):
     try:
-        # Fetch 6 months of data
         # Added auto_adjust=True to fix warnings
         df = yf.download(symbol, period="6mo", interval="1h", progress=False, auto_adjust=True)
         
