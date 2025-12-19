@@ -100,7 +100,7 @@ def main():
     # --- TEMPORARY FIX: WIDE WINDOW ---
     # We allow the health check to run anytime (0-59 mins) just to prove it works.
     # Once you see the message, you can change '0 <= current_minute <= 59' back to '25 <= ... <= 35'
-    health_hours = [9, 11, 13, 15, 16, 17, 18, 19, 20] # Added evening hours for testing
+    health_hours = [9, 11, 13, 15] # Added evening hours for testing
     
     if current_hour in health_hours and 0 <= current_minute <= 59:
         if not alerts:
