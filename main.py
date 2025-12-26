@@ -10,6 +10,11 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # ================= CONFIGURATION =================
+# THE FORTRESS CONFIG (Stable & Tested)
+EMA_FAST_LEN = 50
+EMA_SLOW_LEN = 100
+TRAIL_PERCENT = 0.15  # 15% Drop from High
+
 STOCKS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", 
     "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS", "AXISBANK.NS",
@@ -36,49 +41,63 @@ def send_telegram(message):
 
 def check_stock(symbol):
     try:
-        # Added auto_adjust=True to fix warnings
-        df = yf.download(symbol, period="6mo", interval="1h", progress=False, auto_adjust=True)
-        
+        # Fetch Data (1y is enough)
+        df = yf.download(symbol, period="1y", interval="1h", progress=False, auto_adjust=True)
         if len(df) < 200: return None
         
-        # Calculate Indicators
-        df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-        df['EMA_100'] = df['Close'].ewm(span=100, adjust=False).mean()
+        # --- CALCULATE INDICATORS ---
+        df['EMA_FAST'] = df['Close'].ewm(span=EMA_FAST_LEN, adjust=False).mean()
+        df['EMA_SLOW'] = df['Close'].ewm(span=EMA_SLOW_LEN, adjust=False).mean()
         
-        current = df.iloc[-1]
-        prev = df.iloc[-2]
+        # --- ROBUST LOGIC (Scan Last 4 Candles) ---
+        # This covers a 3-4 hour window, ensuring we don't miss a signal 
+        # even if the bot runs every 2 hours.
         
-        # --- LOGIC ---
+        recent_data = df.tail(5) # Look at last 5 rows
         
-        # 1. INIT BUY
-        if prev['EMA_50'] <= prev['EMA_100'] and current['EMA_50'] > current['EMA_100']:
-            return f"🚀 *INIT BUY: {symbol}*\nGolden Cross (50 > 100)!\nPrice: {current['Close']:.2f}"
+        # Check INIT BUY (Golden Cross) in the recent window
+        # We iterate to find the EXACT moment of cross
+        for i in range(1, len(recent_data)):
+            prev = recent_data.iloc[i-1]
+            curr = recent_data.iloc[i]
+            
+            # Check transition from Bearish/Neutral to Bullish
+            if prev['EMA_FAST'] <= prev['EMA_SLOW'] and curr['EMA_FAST'] > curr['EMA_SLOW']:
+                # Found a cross!
+                timestamp_str = curr.name.strftime('%Y-%m-%d %H:%M')
+                return f"🚀 *INIT BUY: {symbol}*\nGolden Cross (50 > 100)!\nTime: {timestamp_str}\nPrice: {curr['Close']:.2f}"
 
-        # 2. PYRAMID ADD
-        if current['EMA_50'] > current['EMA_100']:
-            touched_ema = current['Low'] <= current['EMA_50']
-            held_support = current['Close'] > current['EMA_50']
+        # Get Current Data for Management
+        current = df.iloc[-1]
+        prev_candle = df.iloc[-2]
+        
+        # Check PYRAMID ADD (Dip to 50 EMA)
+        if current['EMA_FAST'] > current['EMA_SLOW']:
+            touched_ema = current['Low'] <= current['EMA_FAST']
+            held_support = current['Close'] > current['EMA_FAST']
             green_candle = current['Close'] > current['Open']
             
             if touched_ema and held_support and green_candle:
-                 prev_bounce = (prev['Low'] <= prev['EMA_50']) and (prev['Close'] > prev['EMA_50'])
+                 # Debounce: Make sure previous candle didn't already trigger
+                 prev_bounce = (prev_candle['Low'] <= prev_candle['EMA_FAST']) and (prev_candle['Close'] > prev_candle['EMA_FAST'])
                  if not prev_bounce:
                     return f"💰 *PYRAMID ADD: {symbol}*\nDip to 50 EMA.\nPrice: {current['Close']:.2f}"
 
-            # 3. SELL ALL (15% Trail)
-            recent = df.iloc[-300:]
+            # Check SELL ALL (15% Trail)
+            recent = df.iloc[-500:] 
             highest_high = recent['High'].max()
-            stop_level = highest_high * 0.85
+            stop_level = highest_high * (1.0 - TRAIL_PERCENT)
             
-            if prev['Close'] >= stop_level and current['Close'] < stop_level:
+            if prev_candle['Close'] >= stop_level and current['Close'] < stop_level:
                  return f"🛑 *SELL ALL: {symbol}*\n15% Trail Hit.\nStop: {stop_level:.2f}\nCurrent: {current['Close']:.2f}"
                  
         return None
     except Exception as e:
+        # print(f"Error checking {symbol}: {e}")
         return None
 
 def main():
-    print("--- ☁️ Cloud Sentinel (Polished) ---")
+    print("--- ☁️ Cloud Sentinel (Fortress 50/100 - Deep Scan) ---")
     
     ist = pytz.timezone('Asia/Kolkata')
     now_ist = datetime.datetime.now(ist)
@@ -97,14 +116,11 @@ def main():
         send_telegram(final_msg)
         print("✅ Signals sent.")
         
-    # --- TEMPORARY FIX: WIDE WINDOW ---
-    # We allow the health check to run anytime (0-59 mins) just to prove it works.
-    # Once you see the message, you can change '0 <= current_minute <= 59' back to '25 <= ... <= 35'
-    health_hours = [9, 11, 13, 15] # Added evening hours for testing
-    
-    if current_hour in health_hours and 0 <= current_minute <= 59:
+    # Health Check (9:30, 11:30, 1:30, 3:30)
+    health_hours = [9, 11, 13, 15]
+    if current_hour in health_hours and 25 <= current_minute <= 35:
         if not alerts:
-            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStatus: System Online."
+            health_msg = f"💚 *Sentinel Active*\nTime: {now_ist.strftime('%H:%M')}\nStrategy: Fortress 50/100"
             send_telegram(health_msg)
             print("✅ Health Check sent.")
 
