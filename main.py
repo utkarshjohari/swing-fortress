@@ -6,13 +6,14 @@ import os
 import datetime
 import pytz
 import warnings
+import time
 
 # Mute warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # ================= CONFIGURATION =================
 # STRATEGY: Power of Stocks (5EMA + BB 1.5SD)
-# TF: Daily (For End-of-Day Scanning)
+# TF: Daily (End-of-Day Scan)
 
 STOCKS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", 
@@ -22,8 +23,8 @@ STOCKS = [
     "M&M.NS", "NTPC.NS", "POWERGRID.NS", "BAJAJFINSV.NS", "HCLTECH.NS",
     "ONGC.NS", "WIPRO.NS", "COALINDIA.NS", "JSWSTEEL.NS", "ADANIENT.NS",
     "ADANIPORTS.NS", "BPCL.NS", "GRASIM.NS", "HEROMOTOCO.NS", "HINDALCO.NS",
-    "TECHM.NS", "TATAUSERS.NS", "INDUSINDBK.NS", "CIPLA.NS", "APOLLOHOSP.NS",
-    "NESTLEIND.NS", "TITAN.NS", "SHREECEM.NS", "DRREDDY.NS", "EICHERMOT.NS",
+    "TECHM.NS", "TATACONSUM.NS", "INDUSINDBK.NS", "CIPLA.NS", "APOLLOHOSP.NS",
+    "NESTLEIND.NS", "SHREECEM.NS", "DRREDDY.NS", "EICHERMOT.NS",
     "LTIM.NS", "DIVISLAB.NS", "BRITANNIA.NS", "BEL.NS", "TRENT.NS"
 ]
 
@@ -41,24 +42,34 @@ def send_telegram(message):
         payload = {
             "chat_id": chat_id,
             "text": message,
-            "parse_mode": "Markdown"
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
         }
         requests.post(url, json=payload)
     except Exception as e:
         print(f"Error sending Telegram: {e}")
 
+# ================= ROBUST DATA FETCHING =================
+def fetch_data_with_retry(symbol, retries=3):
+    """Tries to download data multiple times if YFinance fails."""
+    for attempt in range(retries):
+        try:
+            df = yf.download(symbol, period='6mo', interval='1d', progress=False)
+            if not df.empty and len(df) > 20:
+                # Fix for MultiIndex columns
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                return df
+        except Exception as e:
+            print(f"⚠️ Retry {attempt+1}/{retries} for {symbol}: {e}")
+            time.sleep(2) # Wait 2 seconds before retry
+    return None
+
 # ================= STRATEGY LOGIC =================
 def check_power_of_stocks(symbol):
     try:
-        # Fetch Daily Data (Last 6 months is plenty for 20SMA)
-        df = yf.download(symbol, period='6mo', interval='1d', progress=False)
-        
-        if df.empty or len(df) < 20:
-            return None
-
-        # Fix for yfinance MultiIndex columns (if present)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        df = fetch_data_with_retry(symbol)
+        if df is None: return None
 
         # --- INDICATORS ---
         # 1. 5 EMA
@@ -67,7 +78,6 @@ def check_power_of_stocks(symbol):
         # 2. Bollinger Bands (20, 1.5)
         bb = ta.bbands(df['Close'], length=20, std=1.5)
         
-        # Robust Column Mapping
         if bb is not None and not bb.empty:
             bbu_col = [c for c in bb.columns if c.startswith('BBU')][0]
             bbl_col = [c for c in bb.columns if c.startswith('BBL')][0]
@@ -75,51 +85,63 @@ def check_power_of_stocks(symbol):
             df['BB_Lower'] = bb[bbl_col]
         else:
             return None
+        
+        # 3. Volume Average (20 Day)
+        df['Vol_Avg'] = ta.sma(df['Volume'], length=20)
 
-        # --- SIGNAL LOGIC (Last Completed Candle) ---
+        # --- SIGNAL LOGIC ---
         last = df.iloc[-1]
         
-        # Check for missing data in last row
         if pd.isna(last['BB_Upper']) or pd.isna(last['EMA_5']):
             return None
+            
+        # Clean Symbol for Links
+        clean_sym = symbol.replace('.NS', '')
+        # TradingView Link
+        tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
+        # Zerodha Link (Generic Search)
+        kite_link = f"https://kite.zerodha.com/chart/ext/tvc/NSE/{clean_sym}"
+
+        # Volume Check
+        vol_tag = ""
+        if last['Volume'] > (last['Vol_Avg'] * 2):
+            vol_tag = "🔥 *HIGH VOLUME*"
 
         # Setup 1: SHORT ALERT (Overbought)
-        # Low > UpperBB AND Low > 5EMA
         if (last['Low'] > last['BB_Upper']) and (last['Low'] > last['EMA_5']):
             trigger = last['Low']
             sl = last['High']
             risk = sl - trigger
-            return (f"🔴 *SHORT ALERT: {symbol}*\n"
+            
+            return (f"🔴 *SHORT ALERT: {clean_sym}* {vol_tag}\n"
                     f"Setup: Overbought (Floating Above)\n"
-                    f"Entry (Trigger): {trigger:.2f}\n"
-                    f"Stop Loss: {sl:.2f}\n"
-                    f"Target 1:3: {trigger - (risk*3):.2f}\n"
-                    f"Target 1:5: {trigger - (risk*5):.2f}")
+                    f"Entry (Trigger): `{trigger:.2f}`\n"
+                    f"Stop Loss: `{sl:.2f}`\n"
+                    f"Target 1:5: `{trigger - (risk*5):.2f}`\n"
+                    f"[TradingView]({tv_link}) | [Kite]({kite_link})")
 
         # Setup 2: LONG ALERT (Oversold)
-        # High < LowerBB AND High < 5EMA
         if (last['High'] < last['BB_Lower']) and (last['High'] < last['EMA_5']):
             trigger = last['High']
             sl = last['Low']
             risk = trigger - sl
-            return (f"🟢 *LONG ALERT: {symbol}*\n"
+            
+            return (f"🟢 *LONG ALERT: {clean_sym}* {vol_tag}\n"
                     f"Setup: Oversold (Floating Below)\n"
-                    f"Entry (Trigger): {trigger:.2f}\n"
-                    f"Stop Loss: {sl:.2f}\n"
-                    f"Target 1:3: {trigger + (risk*3):.2f}\n"
-                    f"Target 1:5: {trigger + (risk*5):.2f}")
+                    f"Entry (Trigger): `{trigger:.2f}`\n"
+                    f"Stop Loss: `{sl:.2f}`\n"
+                    f"Target 1:5: `{trigger + (risk*5):.2f}`\n"
+                    f"[TradingView]({tv_link}) | [Kite]({kite_link})")
             
         return None
 
     except Exception as e:
-        # print(f"Error checking {symbol}: {e}")
         return None
 
 # ================= MAIN EXECUTION =================
 def main():
     print("--- ☁️ Cloud Sentinel (Power of Stocks Daily) ---")
     
-    # Get Time
     ist = pytz.timezone('Asia/Kolkata')
     now_ist = datetime.datetime.now(ist)
     print(f"🕒 Scan Time (IST): {now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -136,26 +158,17 @@ def main():
     if alerts:
         header = f"🚨 *POWER OF STOCKS: DAILY SIGNALS* 🚨\nDate: {now_ist.strftime('%d-%m-%Y')}\n\n"
         body = "\n\n".join(alerts)
-        footer = "\n\n⚠️ _Place Limit/Stop-Limit Orders for Tomorrow._"
+        footer = "\n\n⚠️ _Place GTT Orders for Tomorrow._"
         final_msg = header + body + footer
         
         print(f"✅ Found {len(alerts)} signals. Sending Telegram...")
         send_telegram(final_msg)
     else:
-        # Reliability Fix: Send a 'Heartbeat' message even if no signals
-        # But maybe just log it to console to save Telegram spam, 
-        # OR send a "Clean" msg if you prefer confirmation.
-        # User asked for "Alerts", implies signals. 
-        # But user also complained about "System Active" flakiness.
-        # Compromise: Send a silent log or a simple "No Signals" 
-        # ONLY if it's the scheduled time (e.g., end of day).
-        # Since we removed the time check, let's send a short confirmation.
-        
         print("✅ Scan Complete. No signals found.")
+        # Minimal Heartbeat to confirm system is running
         confirmation_msg = (f"✅ *Daily Scan Complete*\n"
                             f"Date: {now_ist.strftime('%d-%m-%Y')}\n"
-                            f"Status: System Healthy\n"
-                            f"Signals Found: 0")
+                            f"Status: No Signals Found")
         send_telegram(confirmation_msg)
 
 if __name__ == "__main__":
