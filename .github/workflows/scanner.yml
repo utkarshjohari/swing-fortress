@@ -27,7 +27,7 @@ jobs:
           pip install "numpy<2.0.0"
           # 2. FORCE INSTALL PANDAS_TA FROM GITHUB (Critical Fix)
           pip install git+https://github.com/twopirllc/pandas-ta.git@development
-          # 3. Install the rest
+          # 3. Install the rest stuff
           pip install -r requirements.txt
           # 4. Confirm installation
           pip list
