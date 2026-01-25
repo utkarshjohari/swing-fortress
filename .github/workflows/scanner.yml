@@ -1,9 +1,10 @@
-name: Hourly Scanner
+name: Daily Scanner
 
 on:
   schedule:
-    # Runs at minute 30 past every hour (e.g. 9:30, 10:30)
-    - cron: '30 * * * *'
+    # Runs at 11:30 UTC (which is 5:00 PM IST)
+    # Mon-Fri only (Market Days)
+    - cron: '30 11 * * 1-5'
   workflow_dispatch: # Allows manual run button
 
 jobs:
@@ -24,6 +25,7 @@ jobs:
 
       - name: Run Sentinel
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # Mapping GitHub Secrets to Python Variables
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python main.py
