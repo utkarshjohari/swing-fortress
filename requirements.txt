@@ -1,9 +1,6 @@
 yfinance>=0.2.40
 pandas
-# pandas_ta removed (Installed via Git in Workflow)
-numpy<2.0.0
 requests
 pytz
 xlsxwriter
 openpyxl
-setuptools>=65.5.0

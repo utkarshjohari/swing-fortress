@@ -1,6 +1,5 @@
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import requests
 import os
 import datetime
@@ -35,7 +34,7 @@ def send_telegram(message):
         chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
         if not token or not chat_id:
-            print("❌ Telegram credentials missing.")
+            print("❌ Telegram credentials missing in Environment Variables.")
             return
 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -54,16 +53,43 @@ def fetch_data_with_retry(symbol, retries=3):
     """Tries to download data multiple times if YFinance fails."""
     for attempt in range(retries):
         try:
-            df = yf.download(symbol, period='6mo', interval='1d', progress=False)
+            # Download with explicit threads=False to avoid YFinance threading bugs in CI/CD
+            df = yf.download(symbol, period='6mo', interval='1d', progress=False, threads=False)
+            
             if not df.empty and len(df) > 20:
-                # Fix for MultiIndex columns
+                # Fix for MultiIndex columns (Common YFinance Issue)
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
                 return df
         except Exception as e:
             print(f"⚠️ Retry {attempt+1}/{retries} for {symbol}: {e}")
-            time.sleep(2) # Wait 2 seconds before retry
+            time.sleep(2) 
     return None
+
+# ================= NATIVE INDICATORS (NO PANDAS_TA) =================
+def calculate_indicators(df):
+    """Calculates 5EMA and BB(20, 1.5) using pure Pandas."""
+    try:
+        # 1. 5 EMA
+        df['EMA_5'] = df['Close'].ewm(span=5, adjust=False).mean()
+        
+        # 2. Bollinger Bands (20, 1.5)
+        # Calculate SMA 20
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        # Calculate Std Dev 20
+        df['STD_20'] = df['Close'].rolling(window=20).std()
+        
+        # Upper and Lower Bands
+        df['BB_Upper'] = df['SMA_20'] + (1.5 * df['STD_20'])
+        df['BB_Lower'] = df['SMA_20'] - (1.5 * df['STD_20'])
+        
+        # 3. Volume Average (20 Day)
+        df['Vol_Avg'] = df['Volume'].rolling(window=20).mean()
+        
+        return df
+    except Exception as e:
+        # print(f"Math Error: {e}")
+        return None
 
 # ================= STRATEGY LOGIC =================
 def check_power_of_stocks(symbol):
@@ -71,71 +97,53 @@ def check_power_of_stocks(symbol):
         df = fetch_data_with_retry(symbol)
         if df is None: return None
 
-        # --- INDICATORS ---
-        # 1. 5 EMA
-        df['EMA_5'] = ta.ema(df['Close'], length=5)
-        
-        # 2. Bollinger Bands (20, 1.5)
-        bb = ta.bbands(df['Close'], length=20, std=1.5)
-        
-        if bb is not None and not bb.empty:
-            bbu_col = [c for c in bb.columns if c.startswith('BBU')][0]
-            bbl_col = [c for c in bb.columns if c.startswith('BBL')][0]
-            df['BB_Upper'] = bb[bbu_col]
-            df['BB_Lower'] = bb[bbl_col]
-        else:
-            return None
-        
-        # 3. Volume Average (20 Day)
-        df['Vol_Avg'] = ta.sma(df['Volume'], length=20)
+        # Apply Indicators Manually
+        df = calculate_indicators(df)
+        if df is None: return None
 
-        # --- SIGNAL LOGIC ---
         last = df.iloc[-1]
         
+        # Check if indicators exist in last row
         if pd.isna(last['BB_Upper']) or pd.isna(last['EMA_5']):
             return None
             
-        # Clean Symbol for Links
         clean_sym = symbol.replace('.NS', '')
-        # TradingView Link
         tv_link = f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}"
-        # Zerodha Link (Generic Search)
         kite_link = f"https://kite.zerodha.com/chart/ext/tvc/NSE/{clean_sym}"
 
-        # Volume Check
         vol_tag = ""
         if last['Volume'] > (last['Vol_Avg'] * 2):
             vol_tag = "🔥 *HIGH VOLUME*"
 
-        # Setup 1: SHORT ALERT (Overbought)
+        # SHORT ALERT (Overbought)
+        # Low > UpperBB AND Low > 5EMA
         if (last['Low'] > last['BB_Upper']) and (last['Low'] > last['EMA_5']):
             trigger = last['Low']
             sl = last['High']
             risk = sl - trigger
-            
             return (f"🔴 *SHORT ALERT: {clean_sym}* {vol_tag}\n"
-                    f"Setup: Overbought (Floating Above)\n"
-                    f"Entry (Trigger): `{trigger:.2f}`\n"
-                    f"Stop Loss: `{sl:.2f}`\n"
+                    f"Setup: Overbought\n"
+                    f"Entry: `{trigger:.2f}`\n"
+                    f"SL: `{sl:.2f}`\n"
                     f"Target 1:5: `{trigger - (risk*5):.2f}`\n"
                     f"[TradingView]({tv_link}) | [Kite]({kite_link})")
 
-        # Setup 2: LONG ALERT (Oversold)
+        # LONG ALERT (Oversold)
+        # High < LowerBB AND High < 5EMA
         if (last['High'] < last['BB_Lower']) and (last['High'] < last['EMA_5']):
             trigger = last['High']
             sl = last['Low']
             risk = trigger - sl
-            
             return (f"🟢 *LONG ALERT: {clean_sym}* {vol_tag}\n"
-                    f"Setup: Oversold (Floating Below)\n"
-                    f"Entry (Trigger): `{trigger:.2f}`\n"
-                    f"Stop Loss: `{sl:.2f}`\n"
+                    f"Setup: Oversold\n"
+                    f"Entry: `{trigger:.2f}`\n"
+                    f"SL: `{sl:.2f}`\n"
                     f"Target 1:5: `{trigger + (risk*5):.2f}`\n"
                     f"[TradingView]({tv_link}) | [Kite]({kite_link})")
             
         return None
 
-    except Exception as e:
+    except Exception:
         return None
 
 # ================= MAIN EXECUTION =================
@@ -148,28 +156,21 @@ def main():
     
     alerts = []
     
-    # Scan Stocks
     for stock in STOCKS:
         msg = check_power_of_stocks(stock)
         if msg:
             alerts.append(msg)
     
-    # Construct Report
     if alerts:
         header = f"🚨 *POWER OF STOCKS: DAILY SIGNALS* 🚨\nDate: {now_ist.strftime('%d-%m-%Y')}\n\n"
         body = "\n\n".join(alerts)
         footer = "\n\n⚠️ _Place GTT Orders for Tomorrow._"
         final_msg = header + body + footer
-        
         print(f"✅ Found {len(alerts)} signals. Sending Telegram...")
         send_telegram(final_msg)
     else:
         print("✅ Scan Complete. No signals found.")
-        # Minimal Heartbeat to confirm system is running
-        confirmation_msg = (f"✅ *Daily Scan Complete*\n"
-                            f"Date: {now_ist.strftime('%d-%m-%Y')}\n"
-                            f"Status: No Signals Found")
-        send_telegram(confirmation_msg)
+        send_telegram(f"✅ *Daily Scan Complete*\nStatus: No Signals Found")
 
 if __name__ == "__main__":
     main()
