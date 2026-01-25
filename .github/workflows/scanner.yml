@@ -17,19 +17,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          # Updated to 3.12 to match the requirements seen in your error log
-          python-version: '3.12'
+          # Reverting to 3.10 as it has the best compatibility for financial libraries
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 1. Force install Numpy < 2.0 FIRST
+          # 1. Force install Numpy < 2.0 (Critical for pandas_ta)
           pip install "numpy<2.0.0"
-          # 2. FORCE INSTALL PANDAS_TA FROM GITHUB (Critical Fix)
-          pip install git+https://github.com/twopirllc/pandas-ta.git@development
-          # 3. Install the rest stuff
+          # 2. INSTALL PANDAS_TA VIA ZIP (Bypasses Git Auth errors)
+          pip install https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
+          # 3. Install the rest
           pip install -r requirements.txt
-          # 4. Confirm installation
+          # 4. Verify
           pip list
 
       - name: Run Sentinel
