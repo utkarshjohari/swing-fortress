@@ -17,7 +17,6 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          # Reverting to 3.10 as it has the best compatibility for financial libraries
           python-version: '3.10'
 
       - name: Install dependencies
@@ -25,8 +24,8 @@ jobs:
           python -m pip install --upgrade pip
           # 1. Force install Numpy < 2.0 (Critical for pandas_ta)
           pip install "numpy<2.0.0"
-          # 2. INSTALL PANDAS_TA VIA ZIP (Bypasses Git Auth errors)
-          pip install https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
+          # 2. INSTALL PANDAS_TA FROM MAIN BRANCH ZIP (Fixed URL)
+          pip install https://github.com/twopirllc/pandas-ta/archive/main.zip
           # 3. Install the rest
           pip install -r requirements.txt
           # 4. Verify
