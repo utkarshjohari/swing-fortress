@@ -11,24 +11,36 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 1. Checkout YOUR code
       - name: Checkout code
         uses: actions/checkout@v3
+
+      # 2. Checkout PANDAS_TA code (Native GitHub Action)
+      - name: Checkout pandas_ta
+        uses: actions/checkout@v3
+        with:
+          repository: twopirllc/pandas-ta
+          ref: development
+          path: pandas_ta_lib
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          # Python 3.10 is the most stable for this specific library mix
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          # 1. Force install Numpy < 2.0 (Critical)
+          
+          # 1. Force install Numpy < 2.0
           pip install "numpy<2.0.0"
-          # 2. INSTALL PANDAS_TA VIA MASTER ZIP (The correct branch name)
-          pip install https://github.com/twopirllc/pandas-ta/archive/master.zip
+          
+          # 2. INSTALL PANDAS_TA FROM LOCAL FOLDER (100% Reliability)
+          pip install ./pandas_ta_lib
+          
           # 3. Install the rest
           pip install -r requirements.txt
+          
           # 4. Verify
           pip list
 
